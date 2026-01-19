@@ -1,0 +1,7 @@
+{
+  "name": "Receiptify iOS",
+  "description": "A high-fidelity iOS-style receipt tracker and OCR scanner focusing on Apple HIG design and local privacy.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
