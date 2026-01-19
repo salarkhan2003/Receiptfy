@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { TabType, Receipt, AppSettings } from './types';
+import { TabType, Receipt, AppSettings, Category, ReceiptItem, TaxDetail } from './types';
 import { TabBar } from './components/ios/TabBar';
 import { LibraryScreen } from './screens/LibraryScreen';
 import { ScannerScreen } from './screens/ScannerScreen';
@@ -8,6 +8,7 @@ import { AnalyticsScreen } from './screens/AnalyticsScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
 import { storageService } from './services/storageService';
 import { LoadingOverlay } from './components/ios/ActivityIndicator';
+import { NavBar } from './components/ios/NavBar';
 import { COLORS, CATEGORIES } from './constants';
 
 const App: React.FC = () => {
@@ -17,6 +18,7 @@ const App: React.FC = () => {
   const [selectedReceipt, setSelectedReceipt] = useState<Receipt | null>(null);
   const [isNavigating, setIsNavigating] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
+  const [manualInitialData, setManualInitialData] = useState<Partial<Receipt> | null>(null);
 
   const checkDarkMode = useCallback(() => {
     const dark = settings.theme === 'dark' || 
@@ -31,16 +33,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     setReceipts(storageService.getReceipts());
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-    const handler = () => {
-      if (settings.theme === 'system') {
-        storageService.applyTheme(settings);
-        checkDarkMode();
-      }
-    };
-    mediaQuery.addEventListener('change', handler);
-    return () => mediaQuery.removeEventListener('change', handler);
-  }, [settings.theme, checkDarkMode]);
+  }, []);
 
   const handleUpdateSettings = useCallback((newSettings: AppSettings) => {
     setSettings(newSettings);
@@ -53,6 +46,7 @@ const App: React.FC = () => {
     setReceipts(storageService.getReceipts());
     setSelectedReceipt(finalReceipt);
     setActiveTab('Receipts');
+    setManualInitialData(null);
   };
 
   const handleTabChange = (tab: TabType) => {
@@ -64,14 +58,6 @@ const App: React.FC = () => {
     }, 120);
   };
 
-  const handleToggleReimbursed = () => {
-    if (!selectedReceipt) return;
-    const updated = { ...selectedReceipt, isReimbursed: !selectedReceipt.isReimbursed };
-    storageService.saveReceipt(updated);
-    setReceipts(storageService.getReceipts());
-    setSelectedReceipt(updated);
-  };
-
   const handleToggleFavorite = () => {
     if (!selectedReceipt) return;
     const updated = { ...selectedReceipt, isFavorite: !selectedReceipt.isFavorite };
@@ -80,199 +66,264 @@ const App: React.FC = () => {
     setSelectedReceipt(updated);
   };
 
-  const renderDetailView = (receipt: Receipt) => {
-    const catColor = CATEGORIES.find(c => c.name === receipt.category)?.color || COLORS.blue;
-    
+  const ManualEntryForm = () => {
+    const [formData, setFormData] = useState<Partial<Receipt>>({
+      merchant: manualInitialData?.merchant || '',
+      date: manualInitialData?.date || new Date().toISOString().split('T')[0],
+      category: manualInitialData?.category || 'Others',
+      total: manualInitialData?.total || 0,
+      items: manualInitialData?.items || [],
+      taxes: manualInitialData?.taxes || [],
+      paymentMethod: manualInitialData?.paymentMethod || 'UPI',
+      image: manualInitialData?.image
+    });
+
+    const addItem = () => {
+      setFormData(prev => ({
+        ...prev,
+        items: [...(prev.items || []), { name: '', price: 0 }]
+      }));
+    };
+
+    const addTax = () => {
+      setFormData(prev => ({
+        ...prev,
+        taxes: [...(prev.taxes || []), { name: 'GST', amount: 0, rate: 0 }]
+      }));
+    };
+
+    const saveManual = () => {
+      if (!formData.merchant) {
+        alert("Please enter a merchant name.");
+        return;
+      }
+      if (!formData.total || formData.total <= 0) {
+        alert("Please enter a valid total amount.");
+        return;
+      }
+      const newRec: Receipt = {
+        id: crypto.randomUUID(),
+        merchant: formData.merchant!,
+        date: formData.date!,
+        total: Number(formData.total),
+        tax: formData.taxes?.reduce((s, t) => s + t.amount, 0) || 0,
+        taxes: formData.taxes,
+        items: formData.items,
+        paymentMethod: formData.paymentMethod,
+        category: formData.category as Category,
+        currency: settings.currencySymbol,
+        image: formData.image,
+        isReimbursed: false,
+        isFavorite: false,
+        createdAt: Date.now()
+      };
+      handleCapture(newRec);
+    };
+
     return (
-      <div className="flex-1 flex flex-col bg-[#F2F2F7] dark:bg-black animate-in slide-in-from-right duration-300 overflow-hidden">
-        {/* iOS Glass Header */}
-        <div className="flex-shrink-0 bg-white/80 dark:bg-black/80 ios-blur sticky top-0 border-b-[0.5px] border-[#3C3C4320] dark:border-[#EBEBF520] flex items-center justify-between h-11 px-4 pt-[env(safe-area-inset-top)] z-50">
-          <button onClick={() => setSelectedReceipt(null)} className="text-[#007AFF] text-[17px] font-medium flex items-center">
-            <svg width="12" height="21" viewBox="0 0 12 21" className="mr-2">
-              <path d="M11 1L1 10.5L11 20" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
-            </svg>
-            Activity
-          </button>
-          <span className="font-semibold text-[17px] text-black dark:text-white">Transaction</span>
-          <button onClick={handleToggleFavorite} className="text-[#007AFF] focus:outline-none">
-             <span className="text-2xl leading-none">{receipt.isFavorite ? '★' : '☆'}</span>
-          </button>
-        </div>
-        
-        <div className="flex-1 overflow-y-auto pb-32">
-          {/* Fixed Visibility Hero Card */}
-          <div className="px-4 pt-6 pb-2">
-            <div 
-              className="relative rounded-[32px] p-7 shadow-2xl overflow-hidden border border-[#3C3C4315] dark:border-white/10"
-              style={{ background: `linear-gradient(145deg, ${isDarkMode ? '#1c1c1e' : '#ffffff'} 0%, ${isDarkMode ? '#000000' : '#f5f5f7'} 100%)` }}
-            >
-               <div 
-                 className="absolute top-0 right-0 w-48 h-48 -mr-16 -mt-16 rounded-full blur-3xl opacity-20 pointer-events-none" 
-                 style={{ backgroundColor: catColor }}
-               />
-               
-               <div className="flex items-start justify-between mb-8">
-                  <div 
-                    className="w-16 h-16 rounded-[22px] flex items-center justify-center text-white text-[28px] font-black shadow-lg transform rotate-3"
-                    style={{ backgroundColor: catColor }}
-                  >
-                    {receipt.merchant[0].toUpperCase()}
-                  </div>
-                  <div className="text-right">
-                    <p className="text-[#8E8E93] text-[11px] font-extrabold uppercase tracking-widest mb-1 opacity-70">Payment Ref</p>
-                    <p className={`text-[14px] font-mono font-bold ${isDarkMode ? 'text-white' : 'text-black'}`}>#{receipt.id.slice(0,6).toUpperCase()}</p>
-                  </div>
-               </div>
-
-               {/* Force black/white text for high contrast */}
-               <h2 className={`text-[28px] font-black tracking-tight mb-2 leading-tight ${isDarkMode ? 'text-white' : 'text-black'}`}>
-                 {receipt.merchant}
-               </h2>
-               
-               <div className="flex items-center space-x-2 mb-8">
-                  <span 
-                    className="text-[12px] font-black px-3.5 py-1.5 rounded-full text-white uppercase tracking-wider shadow-sm"
-                    style={{ backgroundColor: catColor }}
-                  >
-                    {receipt.category}
-                  </span>
-                  <span className="text-[#8E8E93] text-[15px] font-bold">•</span>
-                  <span className="text-[#8E8E93] text-[15px] font-bold">
-                    {new Date(receipt.date).toLocaleDateString('default', { day: 'numeric', month: 'short', year: 'numeric' })}
-                  </span>
-               </div>
-
-               <div className="flex items-baseline space-x-1">
-                 <span className="text-[28px] font-black text-[#007AFF]">{receipt.currency}</span>
-                 <span className={`text-[52px] font-black tracking-tighter leading-none ${isDarkMode ? 'text-white' : 'text-black'}`}>
-                   {receipt.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                 </span>
-               </div>
-            </div>
-          </div>
-
-          {/* Detailed Item List */}
-          {receipt.items && receipt.items.length > 0 && (
-            <div className="px-4 py-2">
-               <div className="bg-white dark:bg-[#1C1C1E] rounded-[28px] border border-[#3C3C431F] dark:border-white/5 overflow-hidden shadow-sm">
-                  <div className="px-6 py-4 border-b border-[#3C3C431F] dark:border-white/5 bg-[#F9F9F9] dark:bg-[#252527] flex justify-between items-center">
-                     <h3 className="text-[13px] font-black text-black dark:text-white uppercase tracking-[0.1em]">Itemized Bill</h3>
-                     <span className="text-[11px] font-bold text-[#8E8E93]">{receipt.items.length} units</span>
-                  </div>
-                  <div className="divide-y divide-[#3C3C431F] dark:divide-white/5">
-                    {receipt.items.map((item, idx) => (
-                      <div key={idx} className="px-6 py-4 flex justify-between items-start group transition-colors">
-                        <div className="flex-1 pr-4">
-                          <p className="text-[17px] font-bold text-black dark:text-white leading-tight mb-1">{item.name}</p>
-                          {item.quantity && <p className="text-[13px] font-bold text-[#8E8E93]">Qty: {item.quantity} @ {receipt.currency}{(item.price / (item.quantity || 1)).toFixed(2)}</p>}
-                        </div>
-                        <p className="text-[17px] font-black text-black dark:text-white">{receipt.currency}{item.price.toFixed(2)}</p>
-                      </div>
-                    ))}
-                  </div>
+      <div className="flex-1 bg-[#F2F2F7] dark:bg-black overflow-y-auto pb-32">
+        <NavBar 
+          title="Manual Entry" 
+          largeTitle={false} 
+          leftAction={<button onClick={() => setManualInitialData(null)} className="text-[#007AFF] font-medium">Cancel</button>} 
+        />
+        <div className="p-4 space-y-6">
+          {formData.image && (
+            <div className="relative rounded-2xl overflow-hidden aspect-video bg-black border border-white/10 shadow-lg">
+               <img src={formData.image} alt="Receipt preview" className="w-full h-full object-contain opacity-80" />
+               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <span className="bg-black/50 backdrop-blur-md text-white text-[10px] font-black uppercase tracking-widest px-3 py-1.5 rounded-full">Source Document Attached</span>
                </div>
             </div>
           )}
 
-          {/* Advanced Tax Breakdown Section */}
-          <div className="px-4 py-2">
-            <div className="bg-white dark:bg-[#1C1C1E] rounded-[28px] border border-[#3C3C431F] dark:border-white/5 overflow-hidden shadow-sm">
-              <div className="px-6 py-4 border-b border-[#3C3C431F] dark:border-white/5 bg-[#F9F9F9] dark:bg-[#252527]">
-                <h3 className="text-[13px] font-black text-black dark:text-white uppercase tracking-[0.15em]">Tax & Additional Fees</h3>
-              </div>
-              <div className="p-6 space-y-4">
-                <div className="flex justify-between items-center text-[16px]">
-                  <span className="text-[#8E8E93] font-semibold">Subtotal</span>
-                  <span className="text-black dark:text-white font-bold">{receipt.currency}{(receipt.subtotal || (receipt.total - (receipt.tax || 0))).toFixed(2)}</span>
-                </div>
-                
-                {/* Individual Taxes (GST, SGST, CGST, etc.) */}
-                <div className="space-y-2 py-3 border-y border-[#3C3C431F] dark:border-white/5">
-                  {receipt.taxes && receipt.taxes.length > 0 ? (
-                    receipt.taxes.map((tax, i) => (
-                      <div key={i} className="flex justify-between items-center text-[14px]">
-                        <span className="text-[#8E8E93] font-medium">{tax.name} {tax.rate ? `(${tax.rate}%)` : ''}</span>
-                        <span className="text-black dark:text-white font-semibold">+{receipt.currency}{tax.amount.toFixed(2)}</span>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="flex justify-between items-center text-[14px]">
-                      <span className="text-[#8E8E93] font-medium">Total Aggregate Tax</span>
-                      <span className="text-black dark:text-white font-semibold">+{receipt.currency}{(receipt.tax || 0).toFixed(2)}</span>
-                    </div>
-                  )}
-                  
-                  {receipt.serviceCharge ? (
-                    <div className="flex justify-between items-center text-[14px]">
-                      <span className="text-[#8E8E93] font-medium">Service Charge</span>
-                      <span className="text-black dark:text-white font-semibold">+{receipt.currency}{receipt.serviceCharge.toFixed(2)}</span>
-                    </div>
-                  ) : null}
+          <div className="bg-white dark:bg-[#1C1C1E] rounded-2xl overflow-hidden divide-y divide-[#3C3C431F]">
+            <div className="p-4 flex items-center justify-between">
+              <span className="text-[15px] font-semibold text-[#8E8E93]">Merchant</span>
+              <input type="text" className="text-right bg-transparent outline-none font-bold text-black dark:text-white" placeholder="Store Name" value={formData.merchant} onChange={e => setFormData({...formData, merchant: e.target.value})} />
+            </div>
+            <div className="p-4 flex items-center justify-between">
+              <span className="text-[15px] font-semibold text-[#8E8E93]">Total ({settings.currencySymbol})</span>
+              <input type="number" className="text-right bg-transparent outline-none font-black text-[#007AFF] text-2xl" placeholder="0.00" value={formData.total === 0 ? '' : formData.total} onChange={e => setFormData({...formData, total: Number(e.target.value)})} />
+            </div>
+            <div className="p-4 flex items-center justify-between">
+              <span className="text-[15px] font-semibold text-[#8E8E93]">Date</span>
+              <input type="date" className="text-right bg-transparent outline-none font-bold text-black dark:text-white" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} />
+            </div>
+            <div className="p-4 flex items-center justify-between">
+              <span className="text-[15px] font-semibold text-[#8E8E93]">Payment</span>
+              <select className="bg-transparent outline-none font-bold text-right text-black dark:text-white" value={formData.paymentMethod} onChange={e => setFormData({...formData, paymentMethod: e.target.value})}>
+                <option value="UPI">UPI / GPay</option>
+                <option value="Card">Visa / Master</option>
+                <option value="Cash">Cash</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+          </div>
 
-                  {receipt.discount ? (
-                    <div className="flex justify-between items-center text-[14px]">
-                      <span className="text-[#FF3B30] font-medium">Discount</span>
-                      <span className="text-[#FF3B30] font-bold">-{receipt.currency}{Math.abs(receipt.discount).toFixed(2)}</span>
-                    </div>
-                  ) : null}
+          <div className="space-y-2">
+            <h3 className="px-2 text-[12px] font-black uppercase text-[#8E8E93] tracking-widest">Bill Line Items</h3>
+            <div className="bg-white dark:bg-[#1C1C1E] rounded-2xl divide-y divide-[#3C3C431F]">
+              {formData.items?.map((item, idx) => (
+                <div key={idx} className="p-4 flex items-center space-x-2">
+                  <input type="text" className="flex-1 bg-transparent outline-none text-black dark:text-white" placeholder="Item Name" value={item.name} onChange={e => {
+                    const newItems = [...formData.items!];
+                    newItems[idx].name = e.target.value;
+                    setFormData({...formData, items: newItems});
+                  }} />
+                  <input type="number" className="w-20 text-right bg-transparent outline-none font-bold text-black dark:text-white" placeholder="0.00" value={item.price === 0 ? '' : item.price} onChange={e => {
+                    const newItems = [...formData.items!];
+                    newItems[idx].price = Number(e.target.value);
+                    setFormData({...formData, items: newItems});
+                  }} />
                 </div>
+              ))}
+              <button onClick={addItem} className="w-full p-4 text-[#007AFF] font-bold text-center active:bg-[#7676801F] transition-colors">+ Add Item Line</button>
+            </div>
+          </div>
 
-                {/* Highly visible Total Pay-box to avoid mixed colors */}
-                <div className="mt-2 p-5 rounded-2xl bg-[#007AFF] flex justify-between items-center shadow-lg transform active:scale-95 transition-transform cursor-pointer">
-                  <div className="flex flex-col">
-                    <span className="text-[10px] font-black uppercase tracking-[0.2em] text-white/70">Final Amount Paid</span>
-                    <span className="text-[20px] font-black leading-tight text-white uppercase tracking-tighter">Grand Total</span>
+          <div className="space-y-2">
+            <h3 className="px-2 text-[12px] font-black uppercase text-[#8E8E93] tracking-widest">Taxes (GST, SGST, VAT)</h3>
+            <div className="bg-white dark:bg-[#1C1C1E] rounded-2xl divide-y divide-[#3C3C431F]">
+              {formData.taxes?.map((tax, idx) => (
+                <div key={idx} className="p-4 flex items-center space-x-2">
+                  <input type="text" className="flex-1 bg-transparent outline-none text-black dark:text-white" placeholder="Label (e.g. SGST)" value={tax.name} onChange={e => {
+                    const newTaxes = [...formData.taxes!];
+                    newTaxes[idx].name = e.target.value;
+                    setFormData({...formData, taxes: newTaxes});
+                  }} />
+                  <input type="number" className="w-20 text-right bg-transparent outline-none font-bold text-black dark:text-white" placeholder="Amt" value={tax.amount === 0 ? '' : tax.amount} onChange={e => {
+                    const newTaxes = [...formData.taxes!];
+                    newTaxes[idx].amount = Number(e.target.value);
+                    setFormData({...formData, taxes: newTaxes});
+                  }} />
+                </div>
+              ))}
+              <button onClick={addTax} className="w-full p-4 text-[#007AFF] font-bold text-center active:bg-[#7676801F] transition-colors">+ Add Tax Component</button>
+            </div>
+          </div>
+
+          <button onClick={saveManual} className="w-full py-5 bg-[#007AFF] text-white rounded-[24px] font-black text-xl shadow-xl active:scale-95 transition-all mt-4">Save Archive Record</button>
+        </div>
+      </div>
+    );
+  };
+
+  const renderDetailView = (receipt: Receipt) => {
+    const catColor = CATEGORIES.find(c => c.name === receipt.category)?.color || COLORS.blue;
+    return (
+      <div className="flex-1 flex flex-col bg-[#F2F2F7] dark:bg-black animate-in slide-in-from-right duration-300 overflow-hidden">
+        <div className="flex-shrink-0 bg-white/80 dark:bg-black/80 ios-blur sticky top-0 border-b-[0.5px] border-[#3C3C4320] dark:border-[#EBEBF520] flex items-center justify-between h-11 px-4 pt-[env(safe-area-inset-top)] z-50">
+          <button onClick={() => setSelectedReceipt(null)} className="text-[#007AFF] text-[17px] font-medium">Activity</button>
+          <span className="font-semibold text-[17px] text-black dark:text-white">Transaction</span>
+          <button onClick={handleToggleFavorite} className="text-[#007AFF] text-xl">{receipt.isFavorite ? '★' : '☆'}</button>
+        </div>
+        
+        <div className="flex-1 overflow-y-auto pb-32">
+          {/* Enhanced Visibility Hero Card */}
+          <div className="px-4 pt-6 pb-2">
+            <div 
+              className="relative rounded-[32px] p-7 shadow-2xl overflow-hidden border border-[#3C3C4315] dark:border-white/10"
+              style={{ background: isDarkMode ? '#1c1c1e' : '#ffffff' }}
+            >
+               <div className="absolute top-0 right-0 w-48 h-48 -mr-16 -mt-16 rounded-full blur-3xl opacity-20" style={{ backgroundColor: catColor }} />
+               <div className="flex items-start justify-between mb-8 relative z-10">
+                  <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-white text-2xl font-black shadow-md" style={{ backgroundColor: catColor }}>
+                    {receipt.merchant[0].toUpperCase()}
                   </div>
-                  <span className="text-[30px] font-black tracking-tighter text-white">
-                    {receipt.currency}{receipt.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                  </span>
+                  <div className="text-right">
+                    <p className="text-[#8E8E93] text-[10px] font-black uppercase tracking-widest">Digital Audit</p>
+                    <p className={`text-sm font-bold ${isDarkMode ? 'text-white' : 'text-black'}`}>#{receipt.id.slice(0,6).toUpperCase()}</p>
+                  </div>
+               </div>
+               <h2 className={`text-3xl font-black tracking-tighter mb-6 relative z-10 leading-tight ${isDarkMode ? 'text-white' : 'text-black'}`}>{receipt.merchant}</h2>
+               
+               {/* HARD CONTRAST BOX - Prevents white/white issues */}
+               <div className="bg-[#7676801F] dark:bg-white/5 p-6 rounded-3xl relative z-10 mb-2 border border-[#3C3C430A] dark:border-white/5">
+                 <div className="flex items-baseline space-x-1">
+                   <span className="text-2xl font-black text-[#007AFF]">{receipt.currency}</span>
+                   <span className={`text-[52px] font-black tracking-tighter leading-none ${isDarkMode ? 'text-white' : 'text-black'}`}>
+                     {receipt.total.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                   </span>
+                 </div>
+                 <p className="text-[#8E8E93] text-[11px] font-black mt-3 uppercase tracking-[0.2em] opacity-80">Aggregate Total Verified</p>
+               </div>
+            </div>
+          </div>
+
+          {/* Tax Breakdown (GST/SGST etc) */}
+          <div className="px-4 py-2">
+            <div className="bg-white dark:bg-[#1C1C1E] rounded-3xl border border-[#3C3C431F] dark:border-white/5 overflow-hidden shadow-sm">
+              <div className="px-5 py-4 border-b border-[#3C3C431F] dark:border-white/5 bg-[#F9F9F9] dark:bg-[#252527] flex justify-between">
+                <span className="text-[12px] font-black text-[#8E8E93] uppercase tracking-[0.15em]">Tax Analysis</span>
+                <span className="text-[12px] font-black text-[#007AFF] uppercase">{receipt.category}</span>
+              </div>
+              <div className="p-5 space-y-4">
+                <div className="flex justify-between items-center text-[15px]">
+                  <span className="text-[#8E8E93] font-medium">Net Value</span>
+                  <span className="font-bold text-black dark:text-white">{(receipt.subtotal || receipt.total - receipt.tax).toFixed(2)}</span>
+                </div>
+                {receipt.taxes?.map((t, i) => (
+                  <div key={i} className="flex justify-between items-center text-[15px]">
+                    <span className="text-[#8E8E93] font-medium">{t.name} {t.rate ? `(${t.rate}%)` : ''}</span>
+                    <span className="font-bold text-[#34C759]">+{t.amount.toFixed(2)}</span>
+                  </div>
+                ))}
+                {!receipt.taxes?.length && receipt.tax > 0 && (
+                  <div className="flex justify-between items-center text-[15px]">
+                    <span className="text-[#8E8E93] font-medium">Aggregated Tax</span>
+                    <span className="font-bold text-[#34C759]">+{receipt.tax.toFixed(2)}</span>
+                  </div>
+                )}
+                <div className="pt-3 border-t border-[#3C3C431F] dark:border-white/5 flex justify-between items-center">
+                   <span className="text-[13px] font-black text-[#8E8E93] uppercase">Final Grand Total</span>
+                   <span className="text-[22px] font-black text-[#007AFF]">{receipt.currency}{receipt.total.toFixed(2)}</span>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Action Buttons */}
-          <div className="px-4 py-8 space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <button 
-                onClick={handleToggleReimbursed}
-                className={`py-5 rounded-[24px] border-2 flex flex-col items-center justify-center space-y-3 transition-all active:scale-95 ${receipt.isReimbursed ? 'bg-[#34C75910] border-[#34C759] text-[#34C759]' : 'bg-white dark:bg-[#1C1C1E] border-[#3C3C431F] dark:border-white/5 text-black dark:text-white'}`}
-              >
-                <div className={`w-12 h-12 rounded-full flex items-center justify-center transition-all ${receipt.isReimbursed ? 'bg-[#34C759] shadow-lg' : 'bg-[#7676801F] dark:bg-[#7676803D]'}`}>
-                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={receipt.isReimbursed ? 'white' : 'currentColor'} strokeWidth="3">
-                    <path d="M20 6L9 17l-5-5" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </div>
-                <span className="text-[14px] font-black uppercase tracking-widest">Verify Paid</span>
-              </button>
-              
-              <button 
-                onClick={() => storageService.exportToPDF(receipt)}
-                className="py-5 rounded-[24px] bg-white dark:bg-[#1C1C1E] border border-[#3C3C431F] dark:border-white/5 flex flex-col items-center justify-center space-y-3 text-[#007AFF] active:scale-95 transition-all shadow-sm"
-              >
-                <div className="w-12 h-12 rounded-full bg-[#007AFF15] flex items-center justify-center">
-                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                    <polyline points="7 10 12 15 17 10" />
-                    <line x1="12" y1="15" x2="12" y2="3" />
-                  </svg>
-                </div>
-                <span className="text-[14px] font-black uppercase tracking-widest">Report PDF</span>
-              </button>
+          {/* Items List */}
+          {receipt.items && receipt.items.length > 0 && (
+            <div className="px-4 py-2">
+               <div className="bg-white dark:bg-[#1C1C1E] rounded-3xl border border-[#3C3C431F] dark:border-white/5 divide-y divide-[#3C3C431F] dark:divide-white/5 shadow-sm">
+                  {receipt.items.map((item, idx) => (
+                    <div key={idx} className="p-5 flex justify-between items-center">
+                      <div className="flex flex-col">
+                         <span className="font-bold text-[17px] text-black dark:text-white">{item.name}</span>
+                         <span className="text-[12px] text-[#8E8E93] font-medium">Quantity {item.quantity || 1}</span>
+                      </div>
+                      <span className="font-black text-[18px] text-black dark:text-white">{receipt.currency}{item.price.toFixed(2)}</span>
+                    </div>
+                  ))}
+               </div>
             </div>
+          )}
 
-            <button 
-               onClick={() => {
-                  if(confirm('Permanently purge this record from local storage?')) {
-                     storageService.deleteReceipt(receipt.id);
-                     setReceipts(storageService.getReceipts());
-                     setSelectedReceipt(null);
-                  }
-               }}
-               className="w-full py-5 rounded-[24px] bg-[#FF3B30] text-white text-[18px] font-black active:scale-[0.97] transition-all shadow-xl shadow-[#FF3B3040]"
-            >
-               Purge Record
-            </button>
+          {/* Source Proof */}
+          {receipt.image && (
+            <div className="px-4 py-2">
+              <div className="bg-white dark:bg-[#1C1C1E] rounded-3xl overflow-hidden border border-[#3C3C431F] dark:border-white/5 shadow-lg">
+                <div className="px-5 py-3 border-b border-[#3C3C431F] dark:border-white/5 flex justify-between items-center bg-[#F9F9F9] dark:bg-[#252527]">
+                  <span className="text-[12px] font-black text-[#8E8E93] uppercase tracking-widest">Visual Evidence</span>
+                  <div className="w-2 h-2 rounded-full bg-[#34C759] animate-pulse" />
+                </div>
+                <div className="relative aspect-[4/5] bg-black">
+                   <img src={receipt.image} alt="Proof" className="w-full h-full object-contain" />
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="px-4 py-8 space-y-4">
+            <button onClick={() => storageService.exportToPDF(receipt)} className="w-full py-5 bg-[#1C1C1E] dark:bg-white text-white dark:text-black rounded-3xl font-black text-lg shadow-xl active:scale-95 transition-all">Export Analysis PDF</button>
+            <button onClick={() => {
+              if(confirm('Permanently delete this record?')) {
+                storageService.deleteReceipt(receipt.id);
+                setReceipts(storageService.getReceipts());
+                setSelectedReceipt(null);
+              }
+            }} className="w-full py-4 text-[#FF3B30] font-bold text-lg">Delete Transaction</button>
           </div>
         </div>
       </div>
@@ -280,29 +331,22 @@ const App: React.FC = () => {
   };
 
   const renderContent = () => {
-    if (selectedReceipt) {
-      return renderDetailView(selectedReceipt);
-    }
+    if (selectedReceipt) return renderDetailView(selectedReceipt);
+    if (manualInitialData !== null) return <ManualEntryForm />;
 
     switch (activeTab) {
-      case 'Receipts':
-        return <LibraryScreen receipts={receipts} onSelect={setSelectedReceipt} />;
-      case 'Scan':
-        return <ScannerScreen onCapture={handleCapture} onCancel={() => setActiveTab('Receipts')} />;
-      case 'Analytics':
-        return <AnalyticsScreen receipts={receipts} />;
-      case 'Settings':
-        return <SettingsScreen settings={settings} onUpdateSettings={handleUpdateSettings} />;
+      case 'Receipts': return <LibraryScreen receipts={receipts} onSelect={setSelectedReceipt} />;
+      case 'Scan': return <ScannerScreen onCapture={handleCapture} onCancel={() => setActiveTab('Receipts')} onManualEntry={(data) => setManualInitialData(data || {})} />;
+      case 'Analytics': return <AnalyticsScreen receipts={receipts} />;
+      case 'Settings': return <SettingsScreen settings={settings} onUpdateSettings={handleUpdateSettings} />;
     }
   };
 
   return (
-    <div className="flex flex-col h-screen max-w-md mx-auto overflow-hidden bg-[#F2F2F7] dark:bg-black shadow-[0_0_80px_rgba(0,0,0,0.15)] relative">
+    <div className="flex flex-col h-screen max-w-md mx-auto bg-[#F2F2F7] dark:bg-black relative overflow-hidden shadow-2xl">
       {isNavigating && <LoadingOverlay />}
       {renderContent()}
-      {!selectedReceipt && activeTab !== 'Scan' && (
-        <TabBar activeTab={activeTab} onTabChange={handleTabChange} />
-      )}
+      {!selectedReceipt && manualInitialData === null && <TabBar activeTab={activeTab} onTabChange={handleTabChange} />}
     </div>
   );
 };
