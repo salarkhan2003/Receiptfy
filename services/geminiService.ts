@@ -2,13 +2,26 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { OCRResult } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Lazy initialize to prevent ReferenceError: process is not defined during module load
+let ai: GoogleGenAI | null = null;
+
+const getAI = () => {
+  if (!ai && typeof process !== 'undefined' && process.env.API_KEY) {
+    ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  }
+  return ai;
+};
 
 export async function extractReceiptData(base64Data: string, mimeType: string = 'image/jpeg'): Promise<OCRResult> {
+  const client = getAI();
+  if (!client) {
+    throw new Error("Gemini AI not configured");
+  }
+
   try {
     const base64String = base64Data.includes(',') ? base64Data.split(',')[1] : base64Data;
 
-    const response = await ai.models.generateContent({
+    const response = await client.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: {
         parts: [
@@ -85,6 +98,6 @@ export async function extractReceiptData(base64Data: string, mimeType: string = 
     return result as OCRResult;
   } catch (error) {
     console.error("OCR extraction failed:", error);
-    return {};
+    throw error;
   }
 }

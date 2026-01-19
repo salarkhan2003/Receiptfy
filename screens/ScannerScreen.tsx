@@ -54,6 +54,7 @@ export const ScannerScreen: React.FC<ScannerScreenProps> = ({ onCapture, onCance
   const processFile = async (file: File) => {
     if (!file) return;
     setIsProcessing(true);
+    
     try {
       let base64Data: string;
       let mimeType: string = file.type;
@@ -71,10 +72,14 @@ export const ScannerScreen: React.FC<ScannerScreenProps> = ({ onCapture, onCance
         base64Data = await readPromise;
       }
 
-      // Check if API Key exists, if not skip AI and go straight to manual
-      if (!process.env.API_KEY) {
-        console.warn("API Key missing, skipping AI extraction.");
-        onManualEntry({ image: base64Data, merchant: file.name.split('.')[0] });
+      // If AI isn't configured, go straight to manual entry with the document preserved
+      const apiKey = typeof process !== 'undefined' ? process.env.API_KEY : '';
+      if (!apiKey || apiKey === 'YOUR_API_KEY') {
+        onManualEntry({ 
+          image: base64Data, 
+          merchant: file.name.split('.')[0],
+          date: new Date().toISOString().split('T')[0] 
+        });
         return;
       }
 
@@ -101,11 +106,15 @@ export const ScannerScreen: React.FC<ScannerScreenProps> = ({ onCapture, onCance
       };
       onCapture(newReceipt);
     } catch (err) {
-      console.error("OCR/AI Error:", err);
-      // Fail gracefully: fallback to manual entry with the image/doc preserved
+      console.error("Processing failed, falling back to manual entry:", err);
+      // Ensure we still pass the file data to manual entry on failure
       const reader = new FileReader();
       reader.onload = () => {
-        onManualEntry({ image: reader.result as string, merchant: file.name.split('.')[0] });
+        onManualEntry({ 
+          image: reader.result as string, 
+          merchant: file.name.split('.')[0],
+          date: new Date().toISOString().split('T')[0]
+        });
       };
       reader.readAsDataURL(file);
     } finally {
@@ -116,67 +125,60 @@ export const ScannerScreen: React.FC<ScannerScreenProps> = ({ onCapture, onCance
   return (
     <div className="flex-1 bg-black flex flex-col relative h-full">
       <NavBar 
-        title="Import Receipt" 
+        title="Scanner" 
         largeTitle={false}
         leftAction={<button onClick={onCancel} className="text-[#007AFF] font-medium">Cancel</button>}
       />
       
-      {isProcessing && <LoadingOverlay message="AI Extracting Details..." />}
+      {isProcessing && <LoadingOverlay message="Processing Document..." />}
 
-      <div className="flex-1 flex flex-col items-center justify-center p-8 space-y-8 overflow-y-auto pb-32">
+      <div className="flex-1 flex flex-col items-center justify-center p-8 space-y-12 overflow-y-auto pb-32">
         <div className="text-center space-y-4">
-          <div className="w-24 h-24 bg-gradient-to-br from-[#007AFF] to-[#5AC8FA] rounded-[28px] flex items-center justify-center mx-auto shadow-2xl transform hover:rotate-6 transition-transform">
+          <div className="w-24 h-24 bg-gradient-to-br from-[#007AFF] to-[#5AC8FA] rounded-[28px] flex items-center justify-center mx-auto shadow-2xl">
              <svg width="40" height="40" viewBox="0 0 24 24" fill="none" className="text-white">
                 <path d="M7 3H5C3.89543 3 3 3.89543 3 5V7M17 3H19C20.1046 3 21 3.89543 21 5V7M21 17V19C21 20.1046 20.1046 21 19 21H17M7 21H5C3.89543 21 3 20.1046 3 19V17" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/>
              </svg>
           </div>
-          <h2 className="text-white text-[28px] font-black tracking-tighter">Capture & Log</h2>
-          <p className="text-[#8E8E93] text-[15px] font-medium px-4">Instant AI extraction or manual archive.</p>
+          <h2 className="text-white text-[28px] font-black tracking-tight">Receipt Scan</h2>
+          <p className="text-[#8E8E93] text-[15px] font-medium px-4">Digitize your transactions instantly.</p>
         </div>
 
-        <div className="w-full space-y-3 max-w-sm">
+        <div className="w-full space-y-4 max-w-sm">
           <button 
             onClick={() => cameraInputRef.current?.click()}
-            className="w-full bg-white text-black py-4 rounded-2xl text-[17px] font-bold active:scale-[0.98] transition-all flex items-center justify-center space-x-3 shadow-lg"
+            className="w-full bg-white text-black py-4.5 rounded-2xl text-[17px] font-bold active:scale-[0.98] transition-all flex items-center justify-center shadow-lg"
           >
-            <span className="text-xl">📸</span>
-            <span>Camera Scan</span>
+            Take Photo
           </button>
           
           <button 
             onClick={() => galleryInputRef.current?.click()}
-            className="w-full bg-[#1C1C1E] text-white py-4 rounded-2xl text-[17px] font-bold active:scale-[0.98] transition-all flex items-center justify-center space-x-3 border border-white/10 shadow-lg"
+            className="w-full bg-[#1C1C1E] text-white py-4.5 rounded-2xl text-[17px] font-bold active:scale-[0.98] transition-all flex items-center justify-center border border-white/10 shadow-lg"
           >
-            <span className="text-xl">🖼️</span>
-            <span>Photo Library</span>
+            Choose from Library
           </button>
 
           <button 
             onClick={() => pdfInputRef.current?.click()}
-            className="w-full bg-[#1C1C1E] text-white py-4 rounded-2xl text-[17px] font-bold active:scale-[0.98] transition-all flex items-center justify-center space-x-3 border border-white/10 shadow-lg"
+            className="w-full bg-[#1C1C1E] text-white py-4.5 rounded-2xl text-[17px] font-bold active:scale-[0.98] transition-all flex items-center justify-center border border-white/10 shadow-lg"
           >
-            <span className="text-xl">📄</span>
-            <span>Import Document (PDF)</span>
+            Upload PDF
           </button>
 
           <div className="pt-8 text-center">
-            <div className="h-[1px] bg-white/10 w-full mb-6 relative">
-               <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-black px-4 text-[#8E8E93] text-[11px] font-black uppercase tracking-[0.2em]">Quick Action</span>
+            <div className="h-[0.5px] bg-white/20 w-full mb-6 relative">
+               <span className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-black px-4 text-[#8E8E93] text-[11px] font-black uppercase tracking-[0.2em]">Manual</span>
             </div>
             <button 
               onClick={() => onManualEntry()}
-              className="text-[#007AFF] text-[17px] font-bold active:opacity-60 transition-opacity flex items-center justify-center w-full space-x-2"
+              className="text-[#007AFF] text-[17px] font-bold active:opacity-60 transition-opacity flex items-center justify-center w-full"
             >
-              <span>Manual Entry Without AI</span>
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                <path d="M1 7H13M13 7L9 3M13 7L9 11" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
+              Manual Entry
             </button>
           </div>
         </div>
       </div>
 
-      {/* Hidden Inputs */}
       <input type="file" accept="image/*" capture="environment" ref={cameraInputRef} onChange={(e) => processFile(e.target.files?.[0]!)} className="hidden" />
       <input type="file" accept="image/*" ref={galleryInputRef} onChange={(e) => processFile(e.target.files?.[0]!)} className="hidden" />
       <input type="file" accept="application/pdf" ref={pdfInputRef} onChange={(e) => processFile(e.target.files?.[0]!)} className="hidden" />
